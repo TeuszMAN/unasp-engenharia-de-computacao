@@ -1,0 +1,20 @@
+# Lista branca: nada entra no repositório até ser liberado aqui.
+# Para publicar um projeto novo, acrescente a pasta dele no bloco abaixo.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+
+!/Embarcados/
+/Embarcados/*
+!/Embarcados/pi-temperatura/
+
+# Regras gerais, valem dentro das pastas liberadas
+.pio/
+.venv/
+venv/
+__pycache__/
+.ipynb_checkpoints/
+.vscode/
+secrets.h
+.env

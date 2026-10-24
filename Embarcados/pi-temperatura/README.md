@@ -1,0 +1,72 @@
+# Monitoramento de temperatura com ESP32
+
+Projeto Integrador do 8º semestre de Engenharia de Computação (UNASP).
+
+O ESP32 lê a temperatura em um sensor DS18B20 e liga um cooler quando ela passa de um limite, usando controle ON/OFF com histerese. Os valores aparecem num display LCD e numa página web servida pelo próprio ESP32. Um programa de computação gráfica em Python lê essa página continuamente e representa a temperatura numa cena 3D.
+
+![Programa de computação gráfica](docs/captura_programa_cg.png)
+
+## Diagrama de blocos
+
+![Diagrama de blocos do sistema de controle](docs/diagrama_de_blocos.png)
+
+Malha fechada: a referência (liga acima de 28 °C, desliga abaixo de 27 °C) é comparada com a temperatura medida; o ESP32 decide o estado do relé, que aciona o cooler; o cooler retira calor da planta; o DS18B20 fecha a realimentação. O LCD, o servidor web e o programa gráfico apenas monitoram e ficam fora da malha. Versão em PDF: [docs/diagrama_de_blocos.pdf](docs/diagrama_de_blocos.pdf).
+
+## Controle com histerese
+
+Com um limite só, o ruído da leitura perto dele faria o relé ligar e desligar várias vezes seguidas. Com dois limites, entre 27 °C e 28 °C o estado anterior é mantido: o cooler liga acima de 28 °C e só desliga abaixo de 27 °C. Uma faixa mais larga reduz as comutações do relé e aumenta a oscilação da temperatura.
+
+## Componentes e ligações
+
+| Componente | Pino do ESP32 | Observação |
+|---|---|---|
+| DS18B20 (DATA) | GPIO 23 | Resistor de 4,7 kΩ entre DATA e 3,3 V |
+| Módulo relé (IN) | GPIO 26 | Módulo ativo em nível baixo; ajustar `RELE_LIGADO` se for ativo em alto |
+| LCD 16x2 I2C (SDA / SCL) | GPIO 21 / GPIO 22 | Endereço 0x27 (alguns módulos usam 0x3F) |
+| Cooler | Contato do relé | Alimentado por fonte própria |
+
+Os GPIO 34 a 39 do ESP32 são somente entrada e não servem para acionar o relé.
+
+## Firmware
+
+Pasta `firmware/`, projeto PlatformIO.
+
+1. Copie `include/secrets.h.example` para `include/secrets.h` e preencha o nome e a senha da rede Wi-Fi. Esse arquivo fica fora do git.
+2. Compile e grave pelo PlatformIO no VS Code, ou pelo terminal:
+
+```
+pio run -d firmware -t upload
+pio device monitor -d firmware
+```
+
+Ao conectar, o ESP32 mostra o próprio IP no LCD e no monitor serial. Sem Wi-Fi, o controle do cooler continua funcionando.
+
+Rotas HTTP:
+
+| Rota | Retorno |
+|---|---|
+| `/` | Página com temperatura em °C e °F e estado do cooler, já preenchidos |
+| `/temperaturec` | Temperatura em °C (texto) |
+| `/temperaturef` | Temperatura em °F (texto) |
+| `/status` | `LIGADO` ou `DESLIGADO` |
+
+## Programa de computação gráfica
+
+Pasta `computacao_grafica/`. Faz uma requisição HTTP à página do ESP32 a cada 2 segundos e extrai os valores com BeautifulSoup. A cena, feita com Pygame e OpenGL, mostra um cubo de gelo que derrete e muda de cor conforme a faixa de temperatura, e um cooler que gira quando o relé está ligado.
+
+```
+pip install -r computacao_grafica/requirements.txt
+python computacao_grafica/temperatura_cg.py --ip 192.168.0.50
+python computacao_grafica/temperatura_cg.py --simular
+```
+
+O modo `--simular` gera uma temperatura oscilante com a mesma histerese e dispensa o hardware. As setas giram a câmera e ESC fecha.
+
+## Estrutura
+
+```
+pi-temperatura/
+├── firmware/              projeto PlatformIO do ESP32
+├── computacao_grafica/    visualização 3D em Python
+└── docs/                  diagrama de blocos e captura de tela
+```
