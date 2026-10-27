@@ -9,6 +9,9 @@
 /Embarcados/*
 !/Embarcados/pi-temperatura/
 
+!/infra/
+!/docs/
+
 # Regras gerais, valem dentro das pastas liberadas
 .pio/
 .venv/
