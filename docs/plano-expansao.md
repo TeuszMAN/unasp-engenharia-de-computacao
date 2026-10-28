@@ -5,7 +5,7 @@ Este documento descreve as fases previstas depois da entrega de 28/10/2026 do [m
 ## Estado atual
 
 - O ESP32 lê o DS18B20 a cada 2 s, liga e desliga o cooler com histerese e expõe a leitura em HTTP (`/temperaturec`, `/temperaturef`, `/status`) e na serial (`Temperatura: %.2f C | Cooler: LIGADO|DESLIGADO`).
-- O agente assistente de um colega consome essa leitura. Rotas HTTP e linha serial são interfaces e não devem mudar sem combinar com ele.
+- O agente assistente de um colega lê a linha serial pelo USB. Ela é uma interface e não deve mudar sem combinar com ele. As rotas HTTP são usadas pela página web e pelo programa de computação gráfica.
 - A Raspberry Pi 400 (`rasp400.local`) já roda o broker Mosquitto na porta 1883, com usuário e senha. Detalhes em [infra/raspberry-pi](../infra/raspberry-pi/README.md).
 
 ## Fase 1: telemetria por MQTT e identificação da planta
@@ -32,8 +32,10 @@ Este documento descreve as fases previstas depois da entrega de 28/10/2026 do [m
 
 ### Agente do colega
 
-- Passa a assinar `pi-temperatura/esp32/leitura` com o usuário `colega`, no lugar da consulta HTTP.
+- Passa a assinar `pi-temperatura/esp32/leitura` com o usuário `colega`, no lugar da leitura serial. Isso dispensa o cabo USB e libera a porta COM, que hoje só um programa por vez consegue abrir.
 - Combinar com ele o formato do JSON antes de fixar o firmware.
+- O firmware continua imprimindo a linha serial, que serve de reserva se a rede ou a Pi falharem.
+- O broker só é alcançável na mesma rede da Pi. Nos ensaios na faculdade, levar a Pi e usar um roteador próprio ou o ponto de acesso do celular, já que redes institucionais costumam isolar os clientes e bloquear mDNS.
 
 ### Ensaio de degrau e modelo de 1ª ordem com atraso
 
