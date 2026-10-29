@@ -1,0 +1,16 @@
+# Simulador (cada integrante usa a sua cópia do MARS)
+*.jar
+
+# Configurações locais de editor e sistema
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Arquivos temporários e de saída
+*.log
+*.tmp
+*.bak

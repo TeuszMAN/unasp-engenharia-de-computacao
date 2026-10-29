@@ -9,6 +9,10 @@
 /Embarcados/*
 !/Embarcados/pi-temperatura/
 
+!/ArquiteturaII/
+/ArquiteturaII/*
+!/ArquiteturaII/batalha-naval-mips/
+
 !/infra/
 !/docs/
 
