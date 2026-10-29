@@ -27,6 +27,10 @@ Este documento descreve as fases previstas depois da entrega de 28/10/2026 do [m
 - A leitura passou a ser retida (antes estava prevista como não retida) para que o agente receba o último valor assim que assinar, sem esperar o próximo ciclo.
 - Manter as rotas HTTP e a linha serial durante a transição, para o agente do colega continuar funcionando até migrar.
 
+### Comandos para o agente (implementado no firmware)
+
+O ESP32 também assina `pi-temperatura/esp32/comando` e aceita `ALVO`, `MODO`, `COOLER` e `TESTE`, e a leitura ganhou os campos `alvo` e `modo`. Com isso o agente muda o alvo e liga ou desliga o cooler pelo broker, sem a serial. Os comandos e o evento `pronto` estão no [README do projeto](../Embarcados/pi-temperatura/README.md#comandos). A escolha entre ON/OFF e PI da fase 2 continua prevista para `pi-temperatura/esp32/config`, sem relação com esse tópico.
+
 ### Logger em Python
 
 - `paho-mqtt` assinando `pi-temperatura/esp32/#` com o usuário `logger`.

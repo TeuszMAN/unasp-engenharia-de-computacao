@@ -16,6 +16,8 @@ Malha fechada: a referência (liga acima de 28 °C, desliga abaixo de 27 °C) é
 
 Com um limite só, o ruído da leitura perto dele faria o relé ligar e desligar várias vezes seguidas. Com dois limites, entre 27 °C e 28 °C o estado anterior é mantido: o cooler liga acima de 28 °C e só desliga abaixo de 27 °C. Uma faixa mais larga reduz as comutações do relé e aumenta a oscilação da temperatura.
 
+Os limites são o **alvo ± 0,5 °C**. O alvo padrão é 27,5 °C, o que dá os mesmos 28 °C e 27 °C, e pode ser mudado por MQTT (veja [Comandos](#comandos)). Sem leitura do sensor o cooler desliga em qualquer modo.
+
 ## Componentes e ligações
 
 | Componente | Pino do ESP32 | Observação |
@@ -58,16 +60,45 @@ O ESP32 publica no Mosquitto da Raspberry Pi ([infra/raspberry-pi](../../infra/r
 |---|---|---|
 | `pi-temperatura/esp32/leitura` | JSON a cada leitura (2 s) | sim |
 | `pi-temperatura/esp32/status` | `online` ao conectar, `offline` pelo Last Will | sim |
+| `pi-temperatura/esp32/evento` | `{"evento":"pronto","reinicio":"ligada"}` a cada conexão ao broker, `{"evento":"teste"}` e `{"erro":"..."}` | não |
+| `pi-temperatura/esp32/comando` | o ESP32 **assina**; ordens em texto, uma por mensagem | não |
 
 ```json
-{"ts":1730000000,"temperatura_c":27.31,"cooler":true}
+{"ts":1730000000,"temperatura_c":27.31,"cooler":true,"alvo":27.5,"modo":"auto"}
 ```
 
 - `ts`: horário Unix em segundos (UTC), do NTP. Vale `null` enquanto o ESP32 não sincroniza, por exemplo numa rede sem internet.
 - `temperatura_c`: °C com duas casas. Vale `null` com falha no sensor, e nesse caso `cooler` vem `false`.
 - `cooler`: estado do relé.
+- `alvo`: temperatura desejada em °C. `modo`: `auto`, `resfriar`, `aquecer`, `desl` ou `manual`.
+- `reinicio` (no evento `pronto`): por que o ESP32 iniciou (`ligada`, `brownout`, `watchdog`, `software`...). `brownout` é falta de energia, por exemplo o cooler puxando corrente da mesma USB.
 
-A leitura é retida para que um programa que assine depois receba na hora o último valor. Para saber se esse valor ainda é atual, use `ts` ou o tópico `status`.
+A leitura é retida para que um programa que assine depois receba na hora o último valor. Para saber se esse valor ainda é atual, use `ts` ou o tópico `status`. Os campos `alvo` e `modo` foram acrescentados depois de `cooler`, sem mudar os três primeiros.
+
+#### Comandos
+
+Publique em `pi-temperatura/esp32/comando`, **sem retain**: um comando retido seria repetido a cada reconexão. Maiúsculas e minúsculas tanto faz, e o alvo aceita vírgula (`ALVO 26,5`). Depois de cada comando a leitura é publicada na hora.
+
+| Comando | Efeito |
+|---|---|
+| `ALVO 26.5` | Alvo de 10 a 40 °C (valores fora da faixa são limitados) |
+| `MODO AUTO` / `MODO RESFRIAR` | Cooler liga e desliga em volta do alvo |
+| `MODO AQUECER` | Não há aquecedor: o cooler desliga e a sala esquenta sozinha |
+| `MODO DESL` | Cooler desligado |
+| `COOLER LIGA` / `COOLER DESLIGA` | Liga ou desliga na mão (modo `manual`). `SERVO 0..89` liga e `SERVO 90..180` desliga |
+| `TESTE` | Liga o cooler por 1 s e volta ao estado anterior |
+| `KP x`, `KI x` | Aceitos e ignorados (o controle é ON/OFF, sem PI) |
+| `?` | Publica a leitura na hora |
+
+Comando que não existe ou `ALVO` sem número vira `{"erro":"comando invalido: ..."}` no tópico `evento`.
+
+O alvo e o modo voltam ao padrão (27,5 °C, `auto`) se o ESP32 reiniciar. Quem manda as ordens, como o assistente Cozmo, deve reenviá-las ao ver `online` no `status` ou o evento `pronto`.
+
+```bash
+mosquitto_pub -h 192.168.1.214 -u colega -P "$MQTT_PASS_COLEGA" -t pi-temperatura/esp32/comando -m 'ALVO 25'
+```
+
+O broker ainda não tem ACL (veja [infra/raspberry-pi](../../infra/raspberry-pi/README.md#observações-de-segurança)): qualquer usuário autenticado pode publicar nesse tópico.
 
 Para acompanhar do notebook (WSL, na raiz do repositório), com o usuário `logger` do `.env`:
 
