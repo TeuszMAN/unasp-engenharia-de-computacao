@@ -7,21 +7,24 @@ Este documento descreve as fases previstas depois da entrega de 28/10/2026 do [m
 - O ESP32 lê o DS18B20 a cada 2 s, liga e desliga o cooler com histerese e expõe a leitura em HTTP (`/temperaturec`, `/temperaturef`, `/status`) e na serial (`Temperatura: %.2f C | Cooler: LIGADO|DESLIGADO`).
 - O agente assistente de um colega lê a linha serial pelo USB. Ela é uma interface e não deve mudar sem combinar com ele. As rotas HTTP são usadas pela página web e pelo programa de computação gráfica.
 - A Raspberry Pi 400 (`rasp400.local`) já roda o broker Mosquitto na porta 1883, com usuário e senha. Detalhes em [infra/raspberry-pi](../infra/raspberry-pi/README.md).
+- O firmware já publica a leitura por MQTT (fase 1, publicação no ESP32), sem mudar a serial nem as rotas HTTP. O formato está no [README do projeto](../Embarcados/pi-temperatura/README.md#mqtt). Falta gravar no ESP32 e testar com a Pi ligada.
 
 ## Fase 1: telemetria por MQTT e identificação da planta
 
-### Publicação no ESP32
+### Publicação no ESP32 (implementada)
 
-- Resolver o broker com `MDNS.queryHost("rasp400")` (biblioteca `ESPmDNS`) e usar o IP fixo da `.env` como reserva. Vale também reservar o IP da Pi no DHCP do roteador.
-- Biblioteca sugerida: `PubSubClient` ou `AsyncMqttClient`. Credenciais do usuário `esp32` em `secrets.h`, com `secrets.h.example` versionado.
-- Tópicos propostos:
+- Resolve o broker com `MDNS.queryHost("rasp400")` e usa o IP fixo do `secrets.h` como reserva. Vale também reservar o IP da Pi no DHCP do roteador.
+- Biblioteca `PubSubClient`. Credenciais do usuário `esp32` em `secrets.h`, com `secrets.h.example` versionado.
+- Tópicos:
 
   | Tópico | Conteúdo | Retido |
   |---|---|---|
-  | `pi-temperatura/esp32/leitura` | JSON `{"ts": 1730000000, "temperatura_c": 27.31, "cooler": true}` | não |
+  | `pi-temperatura/esp32/leitura` | JSON `{"ts":1730000000,"temperatura_c":27.31,"cooler":true}` | sim |
   | `pi-temperatura/esp32/status` | `online` / `offline` (este último pelo Last Will) | sim |
 
-- `ts` em segundos Unix, com o relógio do ESP32 sincronizado por NTP. Assim o carimbo de tempo não depende do atraso da rede.
+- `ts` em segundos Unix, com o relógio do ESP32 sincronizado por NTP. Assim o carimbo de tempo não depende do atraso da rede. Sem NTP, `ts` vale `null` e o logger usa o horário de recepção.
+- JSON plano, com três campos e unidade no nome: cabe numa linha, qualquer cliente lê sem esquema e o agente entende sem tabela de códigos. Falha no sensor vira `"temperatura_c":null`.
+- A leitura passou a ser retida (antes estava prevista como não retida) para que o agente receba o último valor assim que assinar, sem esperar o próximo ciclo.
 - Manter as rotas HTTP e a linha serial durante a transição, para o agente do colega continuar funcionando até migrar.
 
 ### Logger em Python
@@ -33,7 +36,7 @@ Este documento descreve as fases previstas depois da entrega de 28/10/2026 do [m
 ### Agente do colega
 
 - Passa a assinar `pi-temperatura/esp32/leitura` com o usuário `colega`, no lugar da leitura serial. Isso dispensa o cabo USB e libera a porta COM, que hoje só um programa por vez consegue abrir.
-- Combinar com ele o formato do JSON antes de fixar o firmware.
+- Mostrar a ele o formato do JSON acima. Se ele precisar de outro campo, o firmware acrescenta sem quebrar os existentes.
 - O firmware continua imprimindo a linha serial, que serve de reserva se a rede ou a Pi falharem.
 - O broker só é alcançável na mesma rede da Pi. Nos ensaios na faculdade, levar a Pi e usar um roteador próprio ou o ponto de acesso do celular, já que redes institucionais costumam isolar os clientes e bloquear mDNS.
 
