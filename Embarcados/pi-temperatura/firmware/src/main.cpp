@@ -3,31 +3,46 @@
 
   Le a temperatura no DS18B20, liga o cooler (via rele) acima de TEMP_LIGAR e
   desliga abaixo de TEMP_DESLIGAR (controle ON/OFF com histerese), mostra tudo
-  no LCD 16x2 I2C e publica os valores numa pagina web.
+  no LCD 16x2 I2C e publica os valores numa pagina web e no broker MQTT da
+  Raspberry Pi.
 
   A pagina "/" ja sai do ESP32 com os valores preenchidos (%TEMPC%, %TEMPF% e
   %STATUS%), para o programa de computacao grafica conseguir le-la com
   BeautifulSoup. As rotas /temperaturec, /temperaturef e /status devolvem os
   mesmos valores em texto puro.
 
+  MQTT (a cada leitura, retido):
+    pi-temperatura/esp32/leitura  {"ts":1730000000,"temperatura_c":27.31,"cooler":true}
+    pi-temperatura/esp32/status   online / offline (offline pelo Last Will)
+  "ts" e o horario Unix do NTP e "temperatura_c" vale null com falha no
+  sensor; "ts" vale null enquanto o NTP nao sincroniza. A linha serial e as
+  rotas HTTP continuam iguais.
+
   Ligacoes:
     DS18B20 DATA -> GPIO 23 (resistor de 4,7k entre DATA e 3,3V)
     Rele IN      -> GPIO 26
     LCD SDA/SCL  -> GPIO 21 / GPIO 22
 
-  Rede Wi-Fi: copie include/secrets.h.example para include/secrets.h e
+  Rede Wi-Fi e MQTT: copie include/secrets.h.example para include/secrets.h e
   preencha. O secrets.h fica fora do git.
 */
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
+#include <PubSubClient.h>
 #include <ESPAsyncWebServer.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <LiquidCrystal_I2C.h>
 #include <math.h>
+#include <time.h>
 
-#include "secrets.h"  // define WIFI_SSID e WIFI_PASSWORD
+#include "secrets.h"  // define WIFI_SSID, WIFI_PASSWORD e os dados do MQTT
+
+#ifndef MQTT_PASSWORD
+#error "Faltam os dados do MQTT no secrets.h: copie-os de secrets.h.example."
+#endif
 
 // Pinos e componentes
 // Atencao: GPIO 34 a 39 sao somente entrada no ESP32 e nao acionam o rele.
@@ -42,14 +57,28 @@ constexpr float TEMP_DESLIGAR = 27.0f;
 constexpr unsigned long INTERVALO_LEITURA_MS = 2000;
 constexpr unsigned long TEMPO_MAX_WIFI_MS = 15000;
 
+// MQTT. Com o broker fora do ar, cada tentativa pode travar o loop por ate
+// uns 4 s (mDNS + conexao TCP), por isso o intervalo entre tentativas e longo.
+constexpr uint16_t MQTT_PORTA = 1883;
+constexpr unsigned long INTERVALO_RECONEXAO_MQTT_MS = 15000;
+constexpr uint32_t TIMEOUT_MDNS_MS = 1000;
+const char* const MQTT_ID_CLIENTE = "pi-temperatura-esp32";
+const char* const TOPICO_LEITURA = "pi-temperatura/esp32/leitura";
+const char* const TOPICO_STATUS = "pi-temperatura/esp32/status";
+constexpr time_t HORARIO_MINIMO_VALIDO = 1700000000;  // antes disso o NTP nao sincronizou
+
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AsyncWebServer server(80);
+WiFiClient clienteRede;
+PubSubClient mqtt(clienteRede);
 
 float temperaturaC = NAN;
 bool coolerLigado = false;
 unsigned long ultimaLeitura = 0;
+unsigned long ultimaTentativaMqtt = 0;
+IPAddress ipBroker;  // 0.0.0.0 enquanto nao resolvido
 
 // Uma unica leitura alimenta o LCD, o controle e as rotas HTTP.
 void atualizarTemperatura() {
@@ -89,6 +118,58 @@ void atualizarTemperatura() {
   lcd.setCursor(0, 1);
   lcd.print("Cooler: ");
   lcd.print(coolerLigado ? "ON" : "OFF");
+}
+
+// Procura a Pi pelo nome mDNS; se ela nao responder, usa o IP do secrets.h.
+IPAddress resolverBroker() {
+  IPAddress ip = MDNS.queryHost(MQTT_HOST_MDNS, TIMEOUT_MDNS_MS);
+  if (static_cast<uint32_t>(ip) != 0) {
+    return ip;
+  }
+  ip.fromString(MQTT_HOST_IP);
+  return ip;
+}
+
+void conectarMqtt() {
+  if (static_cast<uint32_t>(ipBroker) == 0) {
+    ipBroker = resolverBroker();
+  }
+  mqtt.setServer(ipBroker, MQTT_PORTA);
+
+  // Last Will: se o ESP32 cair sem se despedir, o broker publica "offline".
+  if (mqtt.connect(MQTT_ID_CLIENTE, MQTT_USER, MQTT_PASSWORD,
+                   TOPICO_STATUS, 0, true, "offline")) {
+    mqtt.publish(TOPICO_STATUS, "online", true);
+    Serial.printf("MQTT conectado a %s\n", ipBroker.toString().c_str());
+  } else {
+    Serial.printf("MQTT indisponivel (estado %d); controle local segue ativo.\n",
+                  mqtt.state());
+    ipBroker = IPAddress();  // o IP da Pi pode ter mudado: resolve de novo
+  }
+}
+
+// Retida para que quem assinar depois receba na hora a ultima leitura.
+void publicarLeitura() {
+  if (!mqtt.connected()) {
+    return;
+  }
+
+  char ts[12] = "null";
+  time_t agora = time(nullptr);
+  if (agora > HORARIO_MINIMO_VALIDO) {
+    snprintf(ts, sizeof(ts), "%lu", static_cast<unsigned long>(agora));
+  }
+
+  char temperatura[12] = "null";
+  if (isfinite(temperaturaC)) {
+    snprintf(temperatura, sizeof(temperatura), "%.2f", temperaturaC);
+  }
+
+  char payload[96];
+  snprintf(payload, sizeof(payload),
+           "{\"ts\":%s,\"temperatura_c\":%s,\"cooler\":%s}",
+           ts, temperatura, coolerLigado ? "true" : "false");
+  mqtt.publish(TOPICO_LEITURA, payload, true);
 }
 
 // Troca os placeholders da pagina pelos valores atuais antes de enviar.
@@ -182,6 +263,15 @@ void setup() {
     Serial.println("\nWi-Fi indisponivel; controle local segue ativo.");
   }
 
+  // Horario em UTC; o NTP e o mDNS continuam tentando se o Wi-Fi voltar depois.
+  configTime(0, 0, "pool.ntp.org", "a.ntp.br");
+  MDNS.begin(MQTT_ID_CLIENTE);
+  mqtt.setSocketTimeout(3);
+  if (WiFi.status() == WL_CONNECTED) {
+    conectarMqtt();
+  }
+  ultimaTentativaMqtt = millis();
+
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "text/html; charset=utf-8", paginaHTML, processador);
   });
@@ -205,5 +295,16 @@ void loop() {
   if (agora - ultimaLeitura >= INTERVALO_LEITURA_MS) {
     ultimaLeitura = agora;
     atualizarTemperatura();
+    publicarLeitura();
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  if (mqtt.connected()) {
+    mqtt.loop();
+  } else if (millis() - ultimaTentativaMqtt >= INTERVALO_RECONEXAO_MQTT_MS) {
+    ultimaTentativaMqtt = millis();
+    conectarMqtt();
   }
 }

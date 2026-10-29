@@ -2,7 +2,7 @@
 
 Projeto Integrador do 8º semestre de Engenharia de Computação (UNASP).
 
-O ESP32 lê a temperatura em um sensor DS18B20 e liga um cooler quando ela passa de um limite, usando controle ON/OFF com histerese. Os valores aparecem num display LCD e numa página web servida pelo próprio ESP32. Um programa de computação gráfica em Python lê essa página continuamente e representa a temperatura numa cena 3D.
+O ESP32 lê a temperatura em um sensor DS18B20 e liga um cooler quando ela passa de um limite, usando controle ON/OFF com histerese. Os valores aparecem num display LCD, numa página web servida pelo próprio ESP32 e no broker MQTT da Raspberry Pi. Um programa de computação gráfica em Python lê essa página continuamente e representa a temperatura numa cena 3D.
 
 ![Programa de computação gráfica](docs/captura_programa_cg.png)
 
@@ -31,7 +31,7 @@ Os GPIO 34 a 39 do ESP32 são somente entrada e não servem para acionar o relé
 
 Pasta `firmware/`, projeto PlatformIO.
 
-1. Copie `include/secrets.h.example` para `include/secrets.h` e preencha o nome e a senha da rede Wi-Fi. Esse arquivo fica fora do git.
+1. Copie `include/secrets.h.example` para `include/secrets.h` e preencha o nome e a senha da rede Wi-Fi e a senha do usuário `esp32` do broker (a mesma do `infra/raspberry-pi/.env`). Esse arquivo fica fora do git. Um `secrets.h` antigo, sem os dados do MQTT, interrompe a compilação com uma mensagem pedindo para completá-lo.
 2. Compile e grave pelo PlatformIO no VS Code, ou pelo terminal:
 
 ```
@@ -39,7 +39,7 @@ pio run -d firmware -t upload
 pio device monitor -d firmware
 ```
 
-Ao conectar, o ESP32 mostra o próprio IP no LCD e no monitor serial. Sem Wi-Fi, o controle do cooler continua funcionando.
+Ao conectar, o ESP32 mostra o próprio IP no LCD e no monitor serial. Sem Wi-Fi ou sem broker, o controle do cooler continua funcionando.
 
 Rotas HTTP:
 
@@ -49,6 +49,34 @@ Rotas HTTP:
 | `/temperaturec` | Temperatura em °C (texto) |
 | `/temperaturef` | Temperatura em °F (texto) |
 | `/status` | `LIGADO` ou `DESLIGADO` |
+
+### MQTT
+
+O ESP32 publica no Mosquitto da Raspberry Pi ([infra/raspberry-pi](../../infra/raspberry-pi/README.md)) com o usuário `esp32`. Ele procura a Pi pelo nome `rasp400.local` e, se o mDNS não responder, usa o `MQTT_HOST_IP` do `secrets.h`. Se a conexão cair, tenta de novo a cada 15 s.
+
+| Tópico | Conteúdo | Retido |
+|---|---|---|
+| `pi-temperatura/esp32/leitura` | JSON a cada leitura (2 s) | sim |
+| `pi-temperatura/esp32/status` | `online` ao conectar, `offline` pelo Last Will | sim |
+
+```json
+{"ts":1730000000,"temperatura_c":27.31,"cooler":true}
+```
+
+- `ts`: horário Unix em segundos (UTC), do NTP. Vale `null` enquanto o ESP32 não sincroniza, por exemplo numa rede sem internet.
+- `temperatura_c`: °C com duas casas. Vale `null` com falha no sensor, e nesse caso `cooler` vem `false`.
+- `cooler`: estado do relé.
+
+A leitura é retida para que um programa que assine depois receba na hora o último valor. Para saber se esse valor ainda é atual, use `ts` ou o tópico `status`.
+
+Para acompanhar do notebook (WSL, na raiz do repositório), com o usuário `logger` do `.env`:
+
+```bash
+set -a; . infra/raspberry-pi/.env; set +a
+mosquitto_sub -h 192.168.1.214 -u logger -P "$MQTT_PASS_LOGGER" -t 'pi-temperatura/esp32/#' -v
+```
+
+A linha serial (`Temperatura: 27.31 C | Cooler: LIGADO`) e as rotas HTTP continuam iguais. O ESP32 também responde pelo nome `pi-temperatura-esp32.local`.
 
 ## Programa de computação gráfica
 
